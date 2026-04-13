@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geometric Hell - Roguelike</title>
+    <style>
+        body {
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; margin: 0; background-color: #0b0b0e;
+            font-family: 'Segoe UI', sans-serif; color: white; overflow: hidden;
+        }
+        #game-wrapper { position: relative; }
+        canvas { background-color: #161625; border: 4px solid #252545; display: block; }
+        
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 10, 15, 0.95); display: flex;
+            flex-direction: column; justify-content: center; align-items: center; z-index: 100;
+        }
+        .menu-card {
+            background: #1c1c3a; padding: 40px; border-radius: 20px;
+            border: 2px solid #5741d9; text-align: center; min-width: 350px;
+            box-shadow: 0 0 30px rgba(87, 65, 217, 0.3);
+        }
+        .upgrade-row {
+            display: flex; justify-content: space-between; align-items: center;
+            background: #25254d; padding: 12px; margin: 12px 0; border-radius: 10px;
+        }
+        button {
+            padding: 12px 20px; background: #5741d9; border: none; color: white;
+            cursor: pointer; border-radius: 6px; font-weight: bold; transition: 0.3s;
+        }
+        button:hover:not(:disabled) { background: #7c69f2; transform: translateY(-2px); }
+        button:disabled { background: #3d3d5c; color: #7a7a99; cursor: not-allowed; }
+        .stats-text { font-size: 1.3rem; margin-bottom: 25px; color: #ff9f43; font-weight: bold; }
+        .instructions { font-size: 0.9rem; color: #95afc0; margin-top: 15px; line-height: 1.5; }
+    </style>
+</head>
+<body>
+
+    <div id="game-wrapper">
+        <div id="shop-screen" class="overlay">
+            <div class="menu-card">
+                <h1 style="margin-top:0">LOJA DE UPGRADES</h1>
+                <p class="stats-text">Scrubbles Totais: <span id="total-scrubbles">0</span></p>
+                
+                <div class="upgrade-row">
+                    <div style="text-align: left;">
+                        <strong>Dano do Tiro</strong><br>
+                        <small id="damage-level">Nível: 0/10</small>
+                    </div>
+                    <button id="btn-damage" onclick="buyUpgrade('damage')">Preço: 20</button>
+                </div>
+
+                <div class="upgrade-row">
+                    <div style="text-align: left;">
+                        <strong>Cadência de Tiro</strong><br>
+                        <small id="fire-level">Nível: 0/10</small>
+                    </div>
+                    <button id="btn-fire" onclick="buyUpgrade('fire')">Preço: 10</button>
+                </div>
+
+                <div class="upgrade-row">
+                    <div style="text-align: left;">
+                        <strong>Vida Máxima</strong><br>
+                        <small id="hp-level">Nível: 0/10</small>
+                    </div>
+                    <button id="btn-hp" onclick="buyUpgrade('hp')">Preço: 15</button>
+                </div>
+
+                <button onclick="startGame()" style="margin-top: 25px; background: #1dd1a1; width: 100%; font-size: 1.2rem; color: #000;">
+                    ENTRAR NA ARENA
+                </button>
+                <p class="instructions">WASD para Mover<br>ESPAÇO para Dash (Esquiva)</p>
+            </div>
+        </div>
+
+        <div id="death-screen" class="overlay" style="display: none;">
+            <div class="menu-card">
+                <h1 style="color: #ff6b6b;">FIM DA RUN</h1>
+                <p id="death-stats" style="font-size: 1.1rem; margin: 20px 0;"></p>
+                <button onclick="showShop()" style="width: 100%; background: #5741d9;">VOLTAR PARA A LOJA</button>
+            </div>
+        </div>
+
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let totalScrubbles = 0;
+        let metaUpgrades = {
+            damage: { level: 0, max: 10, baseCost: 20 },
+            fire: { level: 0, max: 10, baseCost: 10 },
+            hp: { level: 0, max: 10, baseCost: 15 }
+        };
+
+        let player, enemies, bullets, particles, keys, isPlaying = false;
+        let wave = 1, enemiesRemaining = 0, totalWaveEnemies = 0, spawnCounter = 0;
+
+        window.addEventListener('keydown', e => {
+            keys[e.key.toLowerCase()] = true;
+            if (e.code === 'Space' && player?.dashCooldown <= 0 && isPlaying) {
+                player.isDashing = 12;
+                player.dashCooldown = 60;
+            }
+        });
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+        function initMatch() {
+            player = {
+                x: canvas.width / 2, y: canvas.height / 2, radius: 18,
+                speed: 3, 
+                pv: 100 + (metaUpgrades.hp.level * 10),
+                maxPv: 100 + (metaUpgrades.hp.level * 10),
+                damage: 1 + metaUpgrades.damage.level,
+                shotInterval: 2000 - (metaUpgrades.fire.level * 175),
+                lastShot: 0,
+                scrubbles: 0,
+                dashCooldown: 0,
+                isDashing: 0
+            };
+            enemies = []; bullets = []; particles = []; keys = {};
+            wave = 1;
+            isPlaying = true;
+            setupWave();
+        }
+
+        function setupWave() {
+            totalWaveEnemies = 20 + (Math.floor((wave - 1) / 10) * 10);
+            enemiesRemaining = totalWaveEnemies;
+            spawnCounter = 0;
+        }
+
+        function startGame() {
+            document.getElementById('shop-screen').style.display = 'none';
+            initMatch();
+        }
+
+        function showShop() {
+            document.getElementById('death-screen').style.display = 'none';
+            document.getElementById('shop-screen').style.display = 'flex';
+            updateShopUI();
+        }
+
+        function buyUpgrade(type) {
+            let upg = metaUpgrades[type];
+            let cost = Math.floor(upg.baseCost * Math.pow(1.35, upg.level));
+            if (totalScrubbles >= cost && upg.level < upg.max) {
+                totalScrubbles -= cost;
+                upg.level++;
+                updateShopUI();
+            }
+        }
+
+        function updateShopUI() {
+            document.getElementById('total-scrubbles').innerText = Math.floor(totalScrubbles);
+            ['damage', 'fire', 'hp'].forEach(type => {
+                let upg = metaUpgrades[type];
+                let cost = Math.floor(upg.baseCost * Math.pow(1.35, upg.level));
+                document.getElementById(`${type}-level`).innerText = `Nível: ${upg.level}/${upg.max}`;
+                const btn = document.getElementById(`btn-${type}`);
+                btn.innerText = upg.level < upg.max ? `Comprar: ${cost}` : "MÁX";
+                btn.disabled = (totalScrubbles < cost || upg.level >= upg.max);
+            });
+        }
+
+        function spawnEnemy() {
+            if (spawnCounter >= totalWaveEnemies) return;
+            
+            const isBoss = (wave % 10 === 0 && spawnCounter === totalWaveEnemies - 1);
+            
+            let type = isBoss ? 'boss' : 'minion';
+            let size = isBoss ? 45 : 15;
+            let hp = 1; // Vida padrão
+            let speed = (1.1 + (wave * 0.05)) * (isBoss ? 0.6 : 1);
+            let color = isBoss ? '#9b59b6' : '#ff4757';
+
+            if (isBoss) {
+                // Vida do Boss: 20 base + 20 a cada 10 ondas
+                hp = 20 + (Math.floor(wave / 10) - 1) * 20;
+            } else if (wave >= 10 && Math.random() < 0.3) {
+                // Elite (Quadrado Azul)
+                type = 'elite';
+                size = 18;
+                hp = 3;
+                color = '#3498db';
+            }
+            
+            let x, y;
+            if (Math.random() < 0.5) {
+                x = Math.random() < 0.5 ? -50 : canvas.width + 50;
+                y = Math.random() * canvas.height;
+            } else {
+                x = Math.random() * canvas.width;
+                y = Math.random() < 0.5 ? -50 : canvas.height + 50;
+            }
+            
+            enemies.push({ x, y, size, speed, hp, maxHp: hp, type, color });
+            spawnCounter++;
+        }
+
+        function createExplosion(x, y, color, count = 10) {
+            for(let i=0; i<count; i++) {
+                particles.push({
+                    x, y, 
+                    vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10,
+                    life: 1, color, size: Math.random()*3 + 1
+                });
+            }
+        }
+
+        function update() {
+            if (!isPlaying) return;
+
+            let moveSpeed = player.speed;
+            if (player.isDashing > 0) { moveSpeed *= 4.5; player.isDashing--; }
+            if (player.dashCooldown > 0) player.dashCooldown--;
+
+            if (keys['w'] && player.y > player.radius) player.y -= moveSpeed;
+            if (keys['s'] && player.y < canvas.height - player.radius) player.y += moveSpeed;
+            if (keys['a'] && player.x > player.radius) player.x -= moveSpeed;
+            if (keys['d'] && player.x < canvas.width - player.radius) player.x += moveSpeed;
+
+            if (Math.random() < 0.02 + (wave * 0.001)) spawnEnemy();
+
+            const now = Date.now();
+            if (now - player.lastShot > player.shotInterval && enemies.length > 0) {
+                let target = enemies.reduce((prev, curr) => 
+                    Math.hypot(curr.x-player.x, curr.y-player.y) < Math.hypot(prev.x-player.x, prev.y-player.y) ? curr : prev
+                );
+                const angle = Math.atan2(target.y - player.y, target.x - player.x);
+                bullets.push({ x: player.x, y: player.y, vx: Math.cos(angle)*12, vy: Math.sin(angle)*12 });
+                player.lastShot = now;
+            }
+
+            for(let i=bullets.length-1; i>=0; i--) {
+                let b = bullets[i]; b.x += b.vx; b.y += b.vy;
+                if(b.x < -10 || b.x > canvas.width+10 || b.y < -10 || b.y > canvas.height+10) {
+                    bullets.splice(i, 1); continue;
+                }
+                for(let j=enemies.length-1; j>=0; j--) {
+                    let en = enemies[j];
+                    if(Math.hypot(b.x-en.x, b.y-en.y) < en.size + 5) {
+                        en.hp -= player.damage; // Aplica dano do upgrade
+                        bullets.splice(i, 1);
+                        if(en.hp <= 0) {
+                            createExplosion(en.x, en.y, en.color);
+                            let reward = 1;
+                            if (en.type === 'boss') reward = 50;
+                            else if (en.type === 'elite') reward = 3;
+                            
+                            player.scrubbles += reward;
+                            enemies.splice(j, 1);
+                            enemiesRemaining--;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            for(let i=enemies.length-1; i>=0; i--) {
+                let en = enemies[i];
+                const angle = Math.atan2(player.y - en.y, player.x - en.x);
+                en.x += Math.cos(angle) * en.speed;
+                en.y += Math.sin(angle) * en.speed;
+
+                if(Math.hypot(player.x - en.x, player.y - en.y) < player.radius + en.size) {
+                    if(player.isDashing <= 0) {
+                        player.pv -= 10;
+                        createExplosion(player.x, player.y, '#f1c40f', 5);
+                        enemies.splice(i, 1);
+                        enemiesRemaining--;
+                        if(player.pv <= 0) {
+                            isPlaying = false;
+                            totalScrubbles += player.scrubbles;
+                            document.getElementById('death-stats').innerText = `Onda: ${wave} | Scrubbles: ${player.scrubbles}`;
+                            document.getElementById('death-screen').style.display = 'flex';
+                        }
+                    }
+                }
+            }
+
+            if (enemiesRemaining <= 0 && spawnCounter >= totalWaveEnemies) {
+                wave++; setupWave();
+            }
+
+            particles.forEach((p, i) => {
+                p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+                if(p.life <= 0) particles.splice(i, 1);
+            });
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+            ctx.font = "bold 24px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(`ONDA ${wave}`, canvas.width/2, 40);
+
+            if (!isPlaying) {
+                ctx.fillStyle = "black";
+                ctx.beginPath(); ctx.arc(400, 300, 18, 0, Math.PI*2); ctx.fill();
+                return;
+            };
+
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+            ctx.globalAlpha = 1;
+
+            enemies.forEach(en => {
+                ctx.fillStyle = en.color;
+                if(en.type === 'boss' || en.type === 'elite') {
+                    ctx.fillRect(en.x - en.size, en.y - en.size, en.size*2, en.size*2);
+                    // Barra de vida pequena sobre Boss/Elite
+                    ctx.fillStyle = "red";
+                    ctx.fillRect(en.x - en.size, en.y - en.size - 10, en.size*2, 4);
+                    ctx.fillStyle = "#2ecc71";
+                    ctx.fillRect(en.x - en.size, en.y - en.size - 10, (en.hp/en.maxHp) * (en.size*2), 4);
+                } else {
+                    ctx.beginPath();
+                    ctx.moveTo(en.x, en.y - en.size);
+                    ctx.lineTo(en.x - en.size, en.y + en.size);
+                    ctx.lineTo(en.x + en.size, en.y + en.size);
+                    ctx.closePath(); ctx.fill();
+                }
+            });
+
+            ctx.fillStyle = '#ff9f43';
+            bullets.forEach(b => {
+                ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill();
+            });
+
+            ctx.fillStyle = player.isDashing > 0 ? '#fff' : '#000';
+            ctx.shadowBlur = 10; ctx.shadowColor = "#5741d9";
+            ctx.beginPath(); ctx.arc(player.x, player.y, player.radius, 0, Math.PI*2); ctx.fill();
+            ctx.shadowBlur = 0;
+
+            ctx.textAlign = "left";
+            ctx.fillStyle = "#2d3436"; ctx.fillRect(20, 20, 150, 15);
+            ctx.fillStyle = "#ff7675"; ctx.fillRect(20, 20, (player.pv/player.maxPv)*150, 15);
+            
+            ctx.fillStyle = "#2d3436"; ctx.fillRect(20, 40, 150, 8);
+            ctx.fillStyle = player.dashCooldown <= 0 ? "#0984e3" : "#636e72";
+            ctx.fillRect(20, 40, (1 - player.dashCooldown/60)*150, 8);
+
+            ctx.fillStyle = "#fff"; ctx.font = "14px sans-serif";
+            ctx.fillText(`PV: ${player.pv}`, 180, 33);
+            ctx.fillText(`SCRUBBLES: ${player.scrubbles}`, 20, 75);
+            ctx.fillText(`DANO: ${player.damage}`, 20, 95);
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        updateShopUI();
+        gameLoop();
+    </script>
+</body>
+</html>

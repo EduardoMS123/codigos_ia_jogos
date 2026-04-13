@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tower Defense - Upgrades</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #2c3e50;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+
+        #game-container {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+
+        canvas {
+            background-color: #ecf0f1;
+            border: 4px solid #34495e;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            cursor: crosshair;
+        }
+
+        /* Menu de Upgrades Lateral */
+        #sidebar {
+            width: 220px;
+            background: #34495e;
+            padding: 20px;
+            border-radius: 10px;
+            border: 2px solid #2c3e50;
+            box-shadow: 5px 5px 15px rgba(0,0,0,0.3);
+        }
+
+        h2 {
+            text-align: center;
+            margin-top: 0;
+            color: #f1c40f;
+            border-bottom: 2px solid #2c3e50;
+            padding-bottom: 10px;
+        }
+
+        .upgrade-item {
+            background: #2c3e50;
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .upgrade-item p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            background: #27ae60;
+            border: none;
+            color: white;
+            font-weight: bold;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            background: #2ecc71;
+        }
+
+        button:disabled {
+            background: #7f8c8d;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        #ui-top {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+        }
+
+        .stats {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-top">
+        <div class="stats">
+            HP: <span id="hp-display">100</span> | Dinheiro: $<span id="score-display">0</span>
+        </div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+
+        <div id="sidebar">
+            <h2>UPGRADES</h2>
+            
+            <div class="upgrade-item">
+                <p><strong>+ Alcance</strong></p>
+                <p>Nível: <span id="lvl-range">0</span>/5</p>
+                <button id="btn-range" onclick="buyUpgrade('range')">Custo: $10</button>
+            </div>
+
+            <div class="upgrade-item">
+                <p><strong>+ Velocidade</strong></p>
+                <p>Nível: <span id="lvl-speed">0</span>/5</p>
+                <button id="btn-speed" onclick="buyUpgrade('speed')">Custo: $20</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const hpDisplay = document.getElementById('hp-display');
+        const scoreDisplay = document.getElementById('score-display');
+
+        canvas.width = 800;
+        canvas.height = 600;
+
+        let tower, enemies, projectiles, dinheiro, spawnTimer;
+
+        // Dados dos Upgrades
+        const upgrades = {
+            range: { level: 0, max: 5, cost: 10, factor: 1.2 },
+            speed: { level: 0, max: 5, cost: 20, factor: 1.2 }
+        };
+
+        function init() {
+            tower = {
+                x: canvas.width / 2,
+                y: canvas.height / 2,
+                size: 40,
+                hp: 100,
+                range: 120,
+                color: '#3498db',
+                fireRate: 30, // Quanto menor, mais rápido
+                timer: 0
+            };
+
+            enemies = [];
+            projectiles = [];
+            dinheiro = 50; // Começa com um pouco de dinheiro para teste
+            spawnTimer = 0;
+            
+            // Resetar níveis de upgrade no restart
+            upgrades.range.level = 0;
+            upgrades.range.cost = 10;
+            upgrades.speed.level = 0;
+            upgrades.speed.cost = 20;
+
+            updateUI();
+        }
+
+        function updateUI() {
+            hpDisplay.innerText = tower.hp;
+            scoreDisplay.innerText = dinheiro;
+
+            // Atualizar botões e textos de upgrade
+            updateUpgradeButton('range', 'btn-range', 'lvl-range');
+            updateUpgradeButton('speed', 'btn-speed', 'lvl-speed');
+        }
+
+        function updateUpgradeButton(type, btnId, lvlId) {
+            const up = upgrades[type];
+            const btn = document.getElementById(btnId);
+            document.getElementById(lvlId).innerText = up.level;
+
+            if (up.level >= up.max) {
+                btn.innerText = "MÁXIMO";
+                btn.disabled = true;
+            } else {
+                btn.innerText = `Custo: $${up.cost}`;
+                btn.disabled = dinheiro < up.cost;
+            }
+        }
+
+        function buyUpgrade(type) {
+            const up = upgrades[type];
+            
+            if (dinheiro >= up.cost && up.level < up.max) {
+                dinheiro -= up.cost;
+                up.level++;
+                
+                if (type === 'range') {
+                    // Aumenta alcance em 5%
+                    tower.range *= 1.05;
+                } else if (type === 'speed') {
+                    // Diminui o intervalo de frames (atira mais rápido)
+                    tower.fireRate -= 4; 
+                }
+
+                // Aumenta custo em 20%
+                up.cost = Math.floor(up.cost * up.factor);
+                updateUI();
+            }
+        }
+
+        class Enemy {
+            constructor() {
+                const side = Math.floor(Math.random() * 4);
+                if (side === 0) { this.x = Math.random() * canvas.width; this.y = -20; }
+                else if (side === 1) { this.x = canvas.width + 20; this.y = Math.random() * canvas.height; }
+                else if (side === 2) { this.x = Math.random() * canvas.width; this.y = canvas.height + 20; }
+                else { this.x = -20; this.y = Math.random() * canvas.height; }
+
+                this.radius = 12;
+                this.speed = 1.5 + (dinheiro / 1000); 
+            }
+
+            update() {
+                const angle = Math.atan2(tower.y - this.y, tower.x - this.x);
+                this.x += Math.cos(angle) * this.speed;
+                this.y += Math.sin(angle) * this.speed;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#e74c3c';
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+
+        class Projectile {
+            constructor(targetX, targetY) {
+                this.x = tower.x;
+                this.y = tower.y;
+                this.radius = 4;
+                this.speed = 7;
+                const angle = Math.atan2(targetY - tower.y, targetX - tower.x);
+                this.vx = Math.cos(angle) * this.speed;
+                this.vy = Math.sin(angle) * this.speed;
+            }
+
+            update() { this.x += this.vx; this.y += this.vy; }
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#f1c40f';
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Desenhar Range
+            ctx.beginPath();
+            ctx.arc(tower.x, tower.y, tower.range, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(52, 152, 219, 0.1)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(52, 152, 219, 0.3)';
+            ctx.stroke();
+
+            // Desenhar Torre
+            ctx.fillStyle = tower.color;
+            ctx.fillRect(tower.x - tower.size/2, tower.y - tower.size/2, tower.size, tower.size);
+
+            spawnTimer++;
+            if (spawnTimer > 60) {
+                enemies.push(new Enemy());
+                spawnTimer = 0;
+            }
+
+            tower.timer++;
+            if (tower.timer >= tower.fireRate) {
+                let target = null;
+                let minDist = tower.range;
+
+                enemies.forEach(enemy => {
+                    const dist = Math.hypot(enemy.x - tower.x, enemy.y - tower.y);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        target = enemy;
+                    }
+                });
+
+                if (target) {
+                    projectiles.push(new Projectile(target.x, target.y));
+                    tower.timer = 0;
+                }
+            }
+
+            projectiles.forEach((p, pIndex) => {
+                p.update();
+                p.draw();
+                if (p.x < 0 || p.x > canvas.width || p.y < 0 || p.y > canvas.height) {
+                    projectiles.splice(pIndex, 1);
+                }
+            });
+
+            enemies.forEach((enemy, eIndex) => {
+                enemy.update();
+                enemy.draw();
+
+                projectiles.forEach((p, pIndex) => {
+                    const dist = Math.hypot(p.x - enemy.x, p.y - enemy.y);
+                    if (dist < enemy.radius + p.radius) {
+                        enemies.splice(eIndex, 1);
+                        projectiles.splice(pIndex, 1);
+                        dinheiro += 10;
+                        updateUI();
+                    }
+                });
+
+                const distToTorre = Math.hypot(enemy.x - tower.x, enemy.y - tower.y);
+                if (distToTorre < (tower.size / 2) + enemy.radius) {
+                    enemies.splice(eIndex, 1);
+                    tower.hp -= 10;
+                    updateUI();
+
+                    if (tower.hp <= 0) {
+                        alert("Fim de Jogo! Dinheiro acumulado: " + dinheiro);
+                        init();
+                    }
+                }
+            });
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        init();
+        gameLoop();
+    </script>
+</body>
+</html>
